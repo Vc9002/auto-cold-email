@@ -28,10 +28,10 @@ docs/
 scripts/
   find_work_email.py            Cascading company-email finder used by the
                                  research workflow: Prospeo -> Hunter ->
-                                 GetProspect -> Tomba, first hit wins, with
-                                 local caching and per-provider monthly
-                                 quota tracking so a repeat lookup never
-                                 costs a credit twice.
+                                 GetProspect -> Tomba -> MineLead, first hit
+                                 wins, with local caching and per-provider
+                                 monthly quota tracking so a repeat lookup
+                                 never costs a credit twice.
   outreach_preflight.py         No-send local gate the outreach agent runs
                                  before touching Gmail or the trackers:
                                  checks weekday, tracker files exist and are
@@ -71,6 +71,7 @@ résumé's base filename.
 .hunter_api_key.txt
 .getprospect_api_key.txt
 .tomba_api_key.txt      (needs BOTH a ta_... key and a ts_... secret in the file)
+.minelead_api_key.txt
 ```
 
 Set `EMAIL_FINDER_KEY_DIR` to point at that folder, or place it as an
@@ -83,8 +84,19 @@ result = find_work_email("Jane", "Doe", company="Acme Corp", domain="acme.com")
 
 Each provider's free tier and confirmed endpoint (as of the date this was
 built) is documented in the script's `MONTHLY_LIMITS` dict and the
-`_try_*` functions. Two more providers were evaluated and are NOT wired
-into the cascade:
+`_try_*` functions. Combined free-tier ceiling across all five: 249/month
+(100 + 50 + 50 + 25 + 24), self-tracked locally per calendar month —
+independent of whatever credit dashboard each provider shows you.
+
+Note that MineLead's `/find` endpoint never marks a result "verified" —
+it only returns a 0-100 quality score. `find_work_email()` reports a
+MineLead hit as `status: "unverified"`, and the research workflow (see
+`docs/claude-research-workflow.md`) rejects unverified addresses under the
+same rule it applies to every other provider. MineLead is still in the
+cascade as one more shot before falling through to "not found," it just
+won't ever produce a `READY` candidate on its own under that policy.
+
+Three more providers were evaluated and are NOT wired into the cascade:
 
 - **Lusha** — auth works, but its Person API is a search-and-reveal
   workflow (search their DB for a `contactId`, then reveal that contact),
@@ -94,12 +106,21 @@ into the cascade:
   across every documented endpoint/auth variant; their own interactive API
   docs page also points at an unconfigured demo spec, suggesting the
   API surface itself is unmaintained. Not usable as of this writing.
+- **ZeroBounce** — it's an email *verifier* (confirms an address you
+  already have), not a finder — wrong shape for this cascade. Also only
+  had 3 free credits on the tested account, too little to matter even if
+  repurposed.
+- **EmailVerify.io** — key untested; the network environment this was
+  built in blocks outbound requests to `api.emailverify.io` at the proxy
+  level, unrelated to the key itself. Worth a retry from an unrestricted
+  environment before ruling it out.
 
 ## Status
 
-Standalone and tested against known real email addresses (not yet run
-against live campaign candidates). Not wired into any scheduled task. The
-outreach side (`codex-outreach-workflow.md`) requires manual pilot
-verification — sender address, résumé attachment, tracker writes — before
-enabling a standing send schedule. See `docs/codex-outreach-workflow.md`
-for the full completion checklist.
+Tested against known real email addresses (not yet run against live
+campaign candidates). Not wired into any scheduled task — this remains a
+manual step in the research workflow until a scheduler invokes it
+directly. The outreach side (`codex-outreach-workflow.md`) requires
+manual pilot verification — sender address, résumé attachment, tracker
+writes — before enabling a standing send schedule. See
+`docs/codex-outreach-workflow.md` for the full completion checklist.

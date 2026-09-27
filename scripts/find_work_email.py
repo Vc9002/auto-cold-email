@@ -3,7 +3,7 @@
 find_work_email.py
 
 Cascading work-email finder for IB networking outreach.
-Order: Prospeo -> Hunter -> GetProspect -> Tomba (first hit wins, stops immediately).
+Order: Prospeo -> Hunter -> GetProspect -> Tomba -> MineLead (first hit wins, stops immediately).
 Every lookup is cached locally (email_cache.db) so the same person is never
 queried twice against any provider, even across days/sessions.
 
@@ -78,9 +78,10 @@ MONTHLY_LIMITS = {
     "hunter": 50,
     "getprospect": 50,
     "tomba": 25,
+    "minelead": 24,
 }
 
-CASCADE_ORDER = ["prospeo", "hunter", "getprospect", "tomba"]
+CASCADE_ORDER = ["prospeo", "hunter", "getprospect", "tomba", "minelead"]
 
 # Sentinel: a provider function returns this when it made NO network call at
 # all (e.g. missing domain/company it requires), as distinct from making a
@@ -110,6 +111,7 @@ def _load_keys() -> dict:
     keys["prospeo"] = _read_key_file(".prospeo_api_key.txt")
     keys["hunter"] = _read_key_file(".hunter_api_key.txt")
     keys["getprospect"] = _read_key_file(".getprospect_api_key.txt")
+    keys["minelead"] = _read_key_file(".minelead_api_key.txt")
 
     tomba_raw = _read_key_file(".tomba_api_key.txt")
     # Tomba's key file format varies by how it was saved (raw two lines,
@@ -388,11 +390,42 @@ def _try_tomba(keys: dict, first_name: str, last_name: str, company: Optional[st
     )
 
 
+def _try_minelead(keys: dict, first_name: str, last_name: str, company: Optional[str], domain: Optional[str]):
+    if not domain:
+        return NOT_ATTEMPTED  # MineLead's /find needs a domain, no company-name fallback
+    params = {
+        "key": keys["minelead"],
+        "domain": domain,
+        "firstname": first_name,
+        "lastname": last_name,
+    }
+    resp = _request_with_retry("GET", "https://api.minelead.io/v1/find/", params=params)
+    if resp is None or resp.status_code != 200:
+        return None
+    data = resp.json()
+    if data.get("status") != "success":
+        return None
+    email = data.get("email")
+    if not email:
+        return None
+    quality = data.get("quality")
+    # MineLead has no separate SMTP-verification flag on /find, just a 0-100
+    # confidence score — treat a high score as "unverified" (not confirmed by
+    # mailbox check) rather than claiming "verified" it never asserted.
+    return EmailResult(
+        name=f"{first_name} {last_name}", company=company, domain=domain,
+        email=email, status="unverified", provider="minelead",
+        confidence=str(quality),
+        raw_provider_response=data, checked_at=time.time(),
+    )
+
+
 PROVIDER_FUNCS = {
     "prospeo": _try_prospeo,
     "hunter": _try_hunter,
     "getprospect": _try_getprospect,
     "tomba": _try_tomba,
+    "minelead": _try_minelead,
 }
 
 
@@ -410,9 +443,9 @@ def find_work_email(
     keys: Optional[dict] = None,
 ) -> EmailResult:
     """
-    Cascades Prospeo -> Hunter -> GetProspect -> Tomba, stopping at the first
-    provider that returns an email. Caches every outcome (including
-    not-found) so a repeat lookup costs zero API credits.
+    Cascades Prospeo -> Hunter -> GetProspect -> Tomba -> MineLead, stopping
+    at the first provider that returns an email. Caches every outcome
+    (including not-found) so a repeat lookup costs zero API credits.
 
     domain is strongly preferred over company (most providers need it for
     the highest-accuracy match); pass both when you have them.
@@ -506,7 +539,7 @@ def find_work_emails_batch(candidates: list, force_refresh: bool = False) -> lis
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="Cascading work-email finder (Prospeo -> Hunter -> GetProspect -> Tomba)")
+    parser = argparse.ArgumentParser(description="Cascading work-email finder (Prospeo -> Hunter -> GetProspect -> Tomba -> MineLead)")
     parser.add_argument("first_name", nargs="?")
     parser.add_argument("last_name", nargs="?")
     parser.add_argument("--company", default=None)
