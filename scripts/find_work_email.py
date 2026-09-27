@@ -21,6 +21,9 @@ Usage as a CLI (single lookup):
 
 Usage as a CLI (batch from a JSON file of candidates):
     python find_work_email.py --batch candidates.json --out results.json
+
+Catch-all recheck (asks every provider, bypasses cache, reports agreement):
+    python find_work_email.py "Jane" "Doe" --domain jpmorgan.com --all-providers
 """
 
 import argparse
@@ -506,6 +509,102 @@ def find_work_email(
     return result
 
 
+PROVIDER_DISPLAY = {
+    "prospeo": "Prospeo", "hunter": "Hunter", "getprospect": "GetProspect",
+    "tomba": "Tomba", "minelead": "MineLead",
+}
+
+
+def find_work_email_all_providers(
+    first_name: str,
+    last_name: str,
+    company: Optional[str] = None,
+    domain: Optional[str] = None,
+    conn: Optional[sqlite3.Connection] = None,
+    keys: Optional[dict] = None,
+) -> dict:
+    """
+    Catch-all recheck mode. Unlike find_work_email(), this does NOT stop at the
+    first hit and does NOT read the cache: it asks every provider that still
+    has monthly quota, so the pool's "2+ providers independently agree" rule
+    can actually be evaluated. Costs up to one credit per provider, so use it
+    only for PENDING_CATCHALL_RECHECK rows, never as the default lookup.
+
+    Returns per-provider answers plus a suggested email_verification_state:
+      verified               - at least one provider mailbox-verified an address
+                               (the most-agreed verified address is suggested)
+      accept_all_2plus_agree - 2+ providers returned the identical address
+      accept_all_domain      - one provider, or providers disagree
+      not_found              - no provider returned anything
+    """
+    owns_conn = conn is None
+    if conn is None:
+        conn = sqlite3.connect(DB_PATH)
+        _init_db(conn)
+    if keys is None:
+        keys = _load_keys()
+
+    answers = []
+    for provider in CASCADE_ORDER:
+        used = _get_credit_usage(conn, provider)
+        if used >= MONTHLY_LIMITS[provider]:
+            answers.append({"provider": PROVIDER_DISPLAY[provider], "skipped": "monthly quota exhausted"})
+            continue
+        try:
+            candidate = PROVIDER_FUNCS[provider](keys, first_name, last_name, company, domain)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [error] {provider} raised {exc!r}", file=sys.stderr)
+            candidate = None
+        if candidate is NOT_ATTEMPTED:
+            answers.append({"provider": PROVIDER_DISPLAY[provider], "skipped": "needs a domain"})
+            continue
+        _increment_credit_usage(conn, provider, 1)
+        if candidate is None:
+            answers.append({"provider": PROVIDER_DISPLAY[provider], "email": None, "status": "not_found"})
+        else:
+            answers.append({
+                "provider": PROVIDER_DISPLAY[provider],
+                "email": candidate.email.lower(),
+                "status": candidate.status,
+                "confidence": candidate.confidence,
+            })
+
+    if owns_conn:
+        conn.close()
+
+    by_address: dict = {}
+    for a in answers:
+        if a.get("email"):
+            by_address.setdefault(a["email"], []).append(a)
+    verified = {e: v for e, v in by_address.items() if any(x["status"] == "verified" for x in v)}
+
+    if verified:
+        email = max(verified, key=lambda e: len(verified[e]))
+        state = "verified"
+    elif by_address:
+        email = max(by_address, key=lambda e: len(by_address[e]))
+        # Any split between providers counts as disagreement, per the
+        # catch-all rule in NETWORKING_CONTEXT.md.
+        agree = len(by_address[email]) >= 2 and len(by_address) == 1
+        state = "accept_all_2plus_agree" if agree else "accept_all_domain"
+    else:
+        email, state = None, "not_found"
+
+    agreeing = [x["provider"] for x in by_address.get(email, [])] if email else []
+    return {
+        "name": f"{first_name} {last_name}",
+        "company": company,
+        "domain": domain,
+        "suggested_email": email,
+        "suggested_email_verification_state": state,
+        "suggested_email_source": agreeing[0] if agreeing else None,
+        "agreeing_providers": agreeing,
+        "distinct_addresses_returned": sorted(by_address),
+        "provider_answers": answers,
+        "checked_at": time.time(),
+    }
+
+
 def find_work_emails_batch(candidates: list, force_refresh: bool = False) -> list:
     """
     candidates: list of dicts with at least first_name/last_name and one of
@@ -547,7 +646,16 @@ def main():
     parser.add_argument("--batch", default=None, help="Path to JSON file: a list of {first_name,last_name,company,domain}")
     parser.add_argument("--out", default=None, help="Path to write JSON results (batch mode)")
     parser.add_argument("--force-refresh", action="store_true", help="Bypass cache and re-query providers")
+    parser.add_argument("--all-providers", action="store_true",
+                        help="Catch-all recheck: query EVERY provider (no cache, no early stop) and report whether 2+ agree. Single lookup only.")
     args = parser.parse_args()
+
+    if args.all_providers:
+        if args.batch or not args.first_name or not args.last_name:
+            parser.error("--all-providers takes one first_name last_name (with --domain), not --batch")
+        result = find_work_email_all_providers(args.first_name, args.last_name, args.company, args.domain)
+        print(json.dumps(result, indent=2, default=str))
+        return
 
     if args.batch:
         with open(args.batch) as f:

@@ -26,6 +26,7 @@ HANDOFFS = ROOT / "Networking Handoffs"
 TRACKERS = ROOT / "Trackers"
 STATE_DIR = ROOT / "Networking Workflow" / "daily-state"
 LOCK = ROOT / "Networking Workflow" / "outreach_writer.lock"
+RESUME_BASENAME = os.environ.get("RESUME_BASENAME", "Resume")  # set per campaign, e.g. "Jane_Doe_Resume_2026-07-15"
 ET = ZoneInfo("America/New_York")
 WINDOWS = {
     "New York": "10:00 ET",
@@ -42,6 +43,7 @@ COMPANY_EMAIL_PATTERN = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-
 # Providers cascaded by find_work_email.py, in cascade order. Apollo is not
 # part of this workflow and must never appear here.
 VALID_EMAIL_SOURCES = {"Prospeo", "Hunter", "GetProspect", "Tomba", "MineLead"}
+PUBLISHED_HANDOFF_NAME = re.compile(r"^\d{4}-\d{2}-\d{2}-claude-research\.json$")
 
 
 def fail(message: str) -> None:
@@ -126,7 +128,7 @@ def validate_handoff(data: dict, today: date, now: datetime) -> None:
 
 
 def latest_handoff(today: date, now: datetime) -> tuple[Path, dict, str]:
-    files = list(HANDOFFS.glob("*.json"))
+    files = [path for path in HANDOFFS.glob("*.json") if PUBLISHED_HANDOFF_NAME.fullmatch(path.name)]
     eligible = []
     for path in files:
         try:
@@ -225,14 +227,110 @@ def preflight(reserve: bool = False, now: datetime | None = None) -> dict:
         with path.open("rb") as handle:
             if handle.read(2) != b"PK":
                 fail(f"tracker is unreadable or not an XLSX: {path}")
-    resume = ROOT / "Resumes" / "Vincent_Chen_Resume_2026-07-15.pdf"
+    resume = ROOT / "Resumes" / f"{RESUME_BASENAME}.pdf"
     if not resume.is_file() or resume.read_bytes()[:4] != b"%PDF":
         fail("canonical résumé PDF is missing or unreadable")
-    source = ROOT / "Resumes" / "Vincent_Chen_Resume_2026-07-15.docx"
+    source = ROOT / "Resumes" / f"{RESUME_BASENAME}.docx"
     if source.stat().st_mtime > resume.stat().st_mtime:
         fail("canonical Word résumé is newer than its PDF export")
     path, data, digest = latest_handoff(today, now)
     return selection(today, path, data, digest, reserve)
+
+
+POOL = HANDOFFS / "research_pool.json"
+POOL_STATUSES = {"READY", "PENDING_EMAIL", "PENDING_CATCHALL_RECHECK", "EXCLUDED", "SENT"}
+SENDABLE_EMAIL_STATES = {"verified", "accept_all_2plus_agree"}
+
+
+def validate_pool(data: dict) -> dict:
+    """Validate research_pool.json against the rolling-pool contract.
+
+    Claude runs this on its working copy before writing the pool back; Codex
+    runs it before selecting READY rows. It never reads Gmail or trackers and
+    a PASS is not permission to send.
+    """
+    if not isinstance(data, dict) or not isinstance(data.get("candidates"), list):
+        fail("pool has no candidates list")
+    parse_et(data.get("last_updated_et"), "last_updated_et")
+    coverage = data.get("search_coverage_cumulative")
+    if not isinstance(coverage, dict) or not isinstance(coverage.get("searched"), list) or not isinstance(coverage.get("not_yet_searched"), list):
+        fail("search_coverage_cumulative must have searched and not_yet_searched lists")
+    if set(coverage["searched"]) & set(coverage["not_yet_searched"]):
+        fail("a firm is listed as both searched and not_yet_searched")
+    ids, urls, emails, ranks = set(), set(), set(), set()
+    ready_caps: dict = {}
+    counts = {status: 0 for status in POOL_STATUSES}
+    for item in data["candidates"]:
+        if not isinstance(item, dict):
+            fail("pool row is not an object")
+        cid, status, name = item.get("contact_id"), item.get("status"), item.get("name")
+        label = cid or name or "<unnamed row>"
+        if not cid or not name or not item.get("firm") or not item.get("parent_bank"):
+            fail(f"{label}: missing contact_id, name, firm, or parent_bank")
+        if cid in ids:
+            fail(f"{label}: duplicate contact_id")
+        ids.add(cid)
+        if status not in POOL_STATUSES:
+            fail(f"{label}: invalid status {status!r}")
+        counts[status] += 1
+        url = item.get("linkedin_url")
+        if url:
+            key = url.strip().lower().rstrip("/")
+            if not key.startswith("https://www.linkedin.com/in/"):
+                fail(f"{label}: LinkedIn URL is invalid")
+            if key in urls:
+                fail(f"{label}: duplicate LinkedIn URL")
+            urls.add(key)
+        email = item.get("company_email")
+        if email:
+            if not isinstance(email, str) or not COMPANY_EMAIL_PATTERN.fullmatch(email):
+                fail(f"{label}: company_email is malformed")
+            if email.lower().split("@")[1] in PERSONAL_EMAIL_DOMAINS:
+                fail(f"{label}: company_email is a personal address")
+            if email.lower() in emails:
+                fail(f"{label}: duplicate company_email")
+            emails.add(email.lower())
+        rank = item.get("priority_rank")
+        if status != "READY":
+            if rank is not None:
+                fail(f"{label}: priority_rank must be null unless READY")
+            if status == "SENT" and (not item.get("sent_at_et") or not item.get("gmail_message_id")):
+                fail(f"{label}: SENT row needs sent_at_et and gmail_message_id")
+            continue
+        # READY rows: everything Codex needs to send must already be here.
+        if not isinstance(rank, int) or rank < 1 or rank in ranks:
+            fail(f"{label}: READY priority_rank is missing, invalid, or repeated")
+        ranks.add(rank)
+        if not url or not email:
+            fail(f"{label}: READY row needs linkedin_url and company_email")
+        if item.get("email_source") not in VALID_EMAIL_SOURCES:
+            fail(f"{label}: email_source {item.get('email_source')!r} is not a finder-script provider")
+        if item.get("email_verification_state") not in SENDABLE_EMAIL_STATES:
+            fail(f"{label}: email_verification_state is not sendable")
+        if item.get("city") not in WINDOWS:
+            fail(f"{label}: city is outside the five target cities")
+        if not item.get("specific_reason") or item.get("connection_type") not in {"school", "fraternity", "hometown", "interest", "none"}:
+            fail(f"{label}: READY row needs specific_reason and a valid connection_type")
+        parse_et(item.get("profile_checked_at_et"), f"{label} profile_checked_at_et")
+        group_status = item.get("group_status")
+        if group_status == "verified":
+            if not item.get("ib_group"):
+                fail(f"{label}: verified group is blank")
+            cap_key = (item["parent_bank"].lower(), item["ib_group"].lower())
+        elif group_status == "unverified":
+            if item.get("ib_group") is not None:
+                fail(f"{label}: unverified group must have null ib_group")
+            cap_key = (item["parent_bank"].lower(), None)
+        else:
+            fail(f"{label}: group_status is invalid")
+        # One READY prospect per parent bank + group; an unverified group caps the
+        # whole parent bank, so it also conflicts with any verified group there.
+        bank = item["parent_bank"].lower()
+        for other in ready_caps.get(bank, []):
+            if other == cap_key or other[1] is None or cap_key[1] is None:
+                fail(f"{label}: violates the one-READY-per-parent-bank-and-group cap")
+        ready_caps.setdefault(bank, []).append(cap_key)
+    return {"rows": len(data["candidates"]), "by_status": counts, "ready_ranks": sorted(ranks)}
 
 
 def main() -> int:
@@ -243,8 +341,14 @@ def main() -> int:
     commands.add_argument("--release-lock", metavar="TOKEN", help="release a previously acquired lock with its exact token")
     commands.add_argument("--lock-status", action="store_true", help="show the existing campaign lock without changing it")
     commands.add_argument("--under-lock", metavar="TOKEN", help="run preflight while the caller holds the persistent lock")
+    commands.add_argument("--validate-pool", nargs="?", const=str(POOL), metavar="PATH", help="validate research_pool.json (or a working copy) against the pool contract; no lock, no send checks")
     args = parser.parse_args()
     try:
+        if args.validate_pool:
+            with open(args.validate_pool, encoding="utf-8") as handle:
+                result = validate_pool(json.load(handle))
+            print(json.dumps({"status": "PASS", "pool": args.validate_pool, **result}, indent=2))
+            return 0
         if args.acquire_lock:
             print(json.dumps({"status": "LOCKED", **acquire_persistent_lock()}, indent=2))
             return 0
@@ -262,7 +366,7 @@ def main() -> int:
         with writer_lock():
             print(json.dumps({"status": "PASS", **preflight(args.reserve)}, indent=2))
         return 0
-    except (OSError, ValueError, KeyError, TypeError) as error:
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
         print(json.dumps({"status": "BLOCKED", "reason": str(error)}, indent=2))
         return 2
 

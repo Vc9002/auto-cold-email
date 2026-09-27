@@ -2,9 +2,11 @@
 
 ## How to distribute this packet
 
-There are exactly three active instruction documents in the OneDrive folder `Networking Workflow`. Give Claude this document plus `CLAUDE_IB_RESEARCH_WORKFLOW.md`. Give Codex this document plus `CODEX_IB_OUTREACH_WORKFLOW.md`. Neither agent needs the other agent's instructions or any archived planning document. Operational paths such as `Networking Handoffs/` and `Trackers/` are relative to the parent `Recruiting` folder, not to `Networking Workflow/`. The live workbooks, résumé, Gmail, the cascading email-finder's provider accounts, browser sessions, and generated JSON handoffs are operational inputs, not additional instruction documents.
+There are exactly three active instruction documents in the shared campaign folder `Networking Workflow`. Give Claude this document plus `CLAUDE_IB_RESEARCH_WORKFLOW.md`. Give Codex this document plus `CODEX_IB_OUTREACH_WORKFLOW.md`. Neither agent needs the other agent's instructions, `SETUP_STATUS_2026-09-26.md`, or any archived planning document. Operational paths such as `Networking Handoffs/` and `Trackers/` are relative to the parent `Recruiting` folder, not to `Networking Workflow/`. The live workbooks, résumé, Gmail, `find_work_email.py`, browser sessions, and `Networking Handoffs/research_pool.json` are operational inputs, not additional instruction documents.
 
 This shared context governs campaign facts and cross-agent rules; the companion governs that agent's actions. New explicit instructions from {OWNER_NAME} override older defaults. Do not activate sending merely because these documents were uploaded.
+
+**2026-09-27 update:** the four dated handoff files (`YYYY-MM-DD-claude-research*.json`) were consolidated one time into a single rolling file, `Networking Handoffs/research_pool.json`, which replaces the dated-handoff contract described below. See "The pool file" section. This also collapsed Codex's three city-window sends into one daily run, and added a two-provider-agreement rule for accept-all domains. Everything else in this document is unchanged.
 
 ## Candidate and personalization
 
@@ -16,21 +18,22 @@ Same major, fraternity, or hometown is strongest; school is strong; shared inter
 
 The campaign has two separate stages, executed in order:
 
-1. [Claude research workflow](CLAUDE_IB_RESEARCH_WORKFLOW.md) runs on the PC scheduler — either once daily or, for higher throughput, **twice daily** (e.g. 3:00 a.m. and 6:00 a.m. Eastern), including weekends. Claude manually reviews LinkedIn profiles, rotates the 40 target firms, finds and verifies company emails via `find_work_email.py` (Prospeo → Hunter → GetProspect → Tomba → MineLead) — Apollo is not part of this workflow — and publishes a completed JSON handoff dated by research day in `Networking Handoffs/`. Aim for 12–15 qualified prospects with verified company emails available for the next send day (roughly 5 per run if running twice daily), including refreshed unsent candidates; if a same-day handoff already exists, publish with a distinguishing suffix (`-2`, etc.) rather than overwriting it. Thursday–Sunday research builds Monday's pool. Claude does not email people or change either tracker.
-2. [Codex outreach and tracker workflow](CODEX_IB_OUTREACH_WORKFLOW.md) sends **10 initial emails per day, Monday–Thursday: up to 40 per week**. No initial sends Friday–Sunday. It uses the latest completed handoff targeting that send date. City invocations start at **10:00 a.m. Eastern** for New York/Philadelphia, **11:00 a.m. Eastern** for Chicago/Houston, and **1:00 p.m. Eastern** for San Francisco. They run serially and share one daily ceiling of 10. Select and reserve the day's recipients across cities before the first send. Codex uses {OWNER_NAME}'s Penn school address and latest updated résumé PDF, checks Claude's sourced address (from the cascading finder) against Gmail and both trackers, reconciles Gmail Sent, and owns all tracker writes. Codex does not repeat the finder step.
+1. [Claude research workflow](CLAUDE_IB_RESEARCH_WORKFLOW.md) runs **twice daily, at 3:00 a.m. and 6:00 a.m. Eastern**, including weekends, as two independent scheduled runs that both update the same pool file. Claude manually reviews LinkedIn profiles, rotates the 40 target firms, finds and verifies company emails with `find_work_email.py` (Prospeo → Hunter → GetProspect → Tomba → MineLead), and updates the shared pool file in place. Claude does not email people or change either tracker.
+2. [Codex outreach and tracker workflow](CODEX_IB_OUTREACH_WORKFLOW.md) sends **up to 10 initial emails per day, Monday–Thursday, in one run at 10:00 a.m. Eastern: up to 40 per week.** No initial sends Friday–Sunday. It reads the pool file's `READY` candidates in priority order, checks Gmail and both trackers, reconciles Gmail Sent, and owns all tracker writes. Codex does not repeat email finding.
 
-The handoff is a candidate list, not permission to send. Codex checks every candidate against Gmail and both trackers before sending. A missing, blocked, incomplete, or stale handoff stops sending for that date. If a send appears in Gmail but an outreach-tracker update fails, Codex stops and reconciles that send before any later outreach. {OWNER_NAME} handles replies, meeting scheduling, LinkedIn messages, and all follow-up emails.
+The pool file is a candidate list, not permission to send. Codex checks every candidate against Gmail and both trackers before sending. {OWNER_NAME} handles replies, meeting scheduling, LinkedIn messages, and all follow-up emails.
 
 ## Two separate trackers
 
-- **Outreach tracker — `Trackers/Outreach Tracker.xlsx`:** research candidates accepted by Codex, initial emails, unanswered outreach, follow-up reminders, bounces, suppression, and permanent send history. This separate workbook must be created during PC setup; it is not the main recruiting tracker.
+- **Outreach tracker — `Trackers/Outreach Tracker.xlsx`:** research candidates accepted by Codex, initial emails, unanswered outreach, follow-up reminders, bounces, suppression, and permanent send history. Created 2026-09-26; not the main recruiting tracker.
 - **Main tracker — `Trackers/Recruiting Tracker.xlsx`:** its networking sheets contain only people who have actually replied or reached back. `Connections & Networking` holds those contacts; `Networking Chats` holds their dated interactions and call notes. Application-tracking sheets are unchanged.
+- **Tracker digest — `Networking Handoffs/tracker_digest.json`:** a small file Codex regenerates after every send run, holding just active send/reply history and bank/group cooldowns. Claude reads this instead of opening either full workbook on a normal research run, to avoid parsing a 190KB+ file daily.
 
-A genuine human reply qualifies, including a decline or referral; record its actual outcome rather than labeling every response a positive relationship. Automated replies, out-of-office notices, delivery receipts, and bounces do not qualify. Copy/upsert responders into the main tracker, but retain their outreach history in the separate tracker. Deduplicate across both trackers and Gmail. Codex's companion document contains the full tracker schema, promotion, and migration safeguards.
+A genuine human reply qualifies, including a decline or referral; record its actual outcome rather than labeling every response a positive relationship. Automated replies, out-of-office notices, delivery receipts, and bounces do not qualify. Copy/upsert responders into the main tracker, but retain their outreach history in the separate tracker. Deduplicate across both trackers, Gmail, and the pool file. Codex's companion document contains the full tracker schema, promotion, and migration safeguards.
 
 The 40-firm target list below and the two workbooks are shared references. New York and Chicago are primary; San Francisco, Houston, and Philadelphia are secondary. The plan targets Summer 2028 U.S. Investment Banking Summer Analyst recruiting. Five completed calls from 40 initial emails requires 12.5% eventual conversion; measure actual outreach cohorts rather than assume that result.
 
-These documents specify the PC schedules and handoff. They do not themselves create or activate scheduled tasks. Before launch, configure one current résumé source, verify the Penn Gmail sender, confirm Claude has all five cascading-finder provider keys (`Networking Workflow/Api Key/`) present and valid, point both agents to the same synced `Networking Handoffs` directory, and test one handoff without sending. Configure the Codex city runs to serialize so they cannot send or edit the tracker at the same time.
+These documents specify the PC schedules and pool-file contract. They do not themselves create or activate scheduled tasks. Before launch, verify the configured résumé source and Penn Gmail sender, confirm `find_work_email.py` can run and reach its providers, point both agents to the same synced `Networking Handoffs` directory, and test the pool file without sending. See `SETUP_STATUS_2026-09-26.md` for prior status and unresolved launch gates.
 
 ## Setup values to complete on the PC
 
@@ -42,54 +45,15 @@ These documents specify the PC schedules and handoff. They do not themselves cre
 
 Both agents must use the same version of this context. Research may continue with explicitly unverified personal fields; sending remains blocked until required account, résumé, tracker and scheduling checks pass. Scheduled runs and integrations must be tested on the PC; these documents do not establish that they work.
 
-## Handoff contract
+## The pool file (replaces the dated-handoff contract)
 
-Use this structure. Required fields may contain `null` only where shown. Keep evidence concise and limited to professional networking facts.
+`Networking Handoffs/research_pool.json` is the single, continuously-updated list of every candidate either agent has ever researched. Claude appends and updates rows; Codex reads `READY` rows and marks them `SENT`. Nothing is deleted. Required per-candidate fields: `contact_id` (stable slug), `priority_rank` (unique among `READY` rows, null otherwise), `name`, `firm`, `parent_bank`, `city`, `ib_group` (null only when `group_status` is `unverified`), `group_status`, `connection_type` (`school`/`fraternity`/`hometown`/`interest`/`none`), `connection_evidence`, `specific_reason`, `linkedin_url`, `company_email`, `email_source`, `email_verification_state` (`verified`, `accept_all_2plus_agree`, `accept_all_domain`, `not_found`, `not_found_after_3_attempts`, or `unverified_employment`), `profile_checked_at_et`, `status` (`READY`/`PENDING_EMAIL`/`PENDING_CATCHALL_RECHECK`/`EXCLUDED`/`SENT`), and (once sent) `sent_at_et`/`gmail_message_id`. Keep one candidate per unique LinkedIn profile URL and one unique verified company email.
 
-```json
-{
-  "schema_version": 2,
-  "campaign": "Summer 2028 IB Summer Analyst networking",
-  "send_date_et": "YYYY-MM-DD",
-  "research_completed_at_et": "YYYY-MM-DDTHH:MM:SS-04:00",
-  "status": "READY",
-  "candidate_count": 1,
-  "shortfall_reason": null,
-  "search_coverage": [
-    {
-      "firm": "Example Bank",
-      "cities": ["New York"],
-      "qualified_count": 1
-    }
-  ],
-  "candidates": [
-    {
-      "priority_rank": 1,
-      "name": "Example Banker",
-      "linkedin_url": "https://www.linkedin.com/in/example",
-      "firm": "Example Bank",
-      "parent_bank": "Example Bank",
-      "title": "Investment Banking Analyst",
-      "ib_group": "Technology",
-      "group_status": "verified",
-      "city": "New York",
-      "connection_type": "school",
-      "connection_evidence": "Profile lists University of Pennsylvania",
-      "specific_reason": "Ask about the analyst's path into the Technology group",
-      "profile_checked_at_et": "YYYY-MM-DDTHH:MM:SS-04:00",
-      "additional_source_url": null,
-      "uncertainty_note": null,
-      "company_email": "banker@examplebank.com",
-      "email_source": "prospeo",
-      "email_verification_state": "verified",
-      "email_verified_at_et": "YYYY-MM-DDTHH:MM:SS-04:00"
-    }
-  ]
-}
-```
+**Catch-all-domain rule:** a domain flagged `accept_all` by the finder script cannot be confirmed for one specific address by a single provider. Rather than excluding the candidate outright, re-run the lookup (or check a second provider) — if 2 or more providers independently return the identical address, mark `email_verification_state: "accept_all_2plus_agree"` and set `status: "READY"`. This is the only path by which a catch-all-domain candidate (JPMorgan, Citi, Jefferies, TD Securities, HSBC, and similar large banks all use catch-all mail domains) can ever become sendable — without it, several top-tier target firms are permanently unreachable under this campaign. Codex caps sends to `accept_all_2plus_agree` addresses at 2 per day as a bounce-risk control, and the existing "stop after 2 hard bounces" rule still applies on top of that cap.
 
-The example is a schema illustration, not a real prospect. Use the correct daylight-saving offset for the date; do not copy `-04:00` blindly. `search_coverage` lists every firm/city combination actually searched, including searches that produced zero qualified people, so future runs can rotate through all 40 firms. Keep one candidate per unique LinkedIn profile URL, one unique verified company email, and one unique `priority_rank` per candidate. Use `null` for `ib_group` only when `group_status` is `unverified`, and explain what is missing in `uncertainty_note`. Use `connection_type: "none"` and `connection_evidence: null` when no connection is found. `email_source` is one of `Prospeo`, `Hunter`, `GetProspect`, `Tomba`, or `MineLead` (whichever provider in the cascade returned the hit; Apollo is not part of this workflow and must not be used). Note that MineLead's `/find` never marks a result verified — it only returns a 0–100 quality score — so a MineLead hit's `email_verification_state` is `"unverified"` and is rejected under the same rule as any other unverified address; it exists in the cascade as one more shot before falling through to "not found," not as an equal-weight fifth source. Each `READY` candidate must have a company email that provider marks verified, plus a verification timestamp; exclude guessed, personal, catch-all, unknown or ambiguous addresses. Do not include other private contact details, drafts, or tracker statuses. Claude's final run summary should report the handoff path, target send date, candidate count, firms/cities searched, email-verification shortfall, and any material gaps.
+`Networking Workflow/outreach_preflight.py --validate-pool [path]` checks a pool file against this contract (unique ranks and identities, sendable email states and providers, the one-READY-per-bank-and-group cap). Claude runs it on its working copy before every write-back; Codex runs it before selecting candidates. A PASS is a contract check, not permission to send.
 
+Claude's final run summary should report: total `READY` candidates in the pool, how many are new this run, firms/cities searched, and any material gap.
 
 ## Shared 40-firm search universe
 
@@ -163,6 +127,5 @@ Office labels below indicate where to search first and require person-level veri
 | 38 | Citizens Capital Markets & Advisory | Middle market | NY, SF | Middle-market investment banking and advisory; confirm office and group for each banker |
 | 39 | Canaccord Genuity | Middle market | NY, Chicago, SF | U.S. investment banking; confirm office, group, and Summer 2028 program |
 | 40 | Solomon Partners | Middle market | NY, Chicago, SF, Houston | M&A and financial advisory platform |
-
 
 Greenhill Advisory is a team-search term under Mizuho; Miller Buckfire/Capital Structure Advisory is a team-search term under Stifel. Reverify current affiliations before outreach and apply the parent-bank/group rule.

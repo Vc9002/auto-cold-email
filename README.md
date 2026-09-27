@@ -19,11 +19,12 @@ committed to this repo — see `.gitignore`.
 docs/
   claude-research-workflow.md   Research-agent instructions: source and
                                  verify candidates, find company emails,
-                                 publish a daily JSON handoff. Never sends.
-  codex-outreach-workflow.md    Outreach-agent instructions: consume the
-                                 handoff, send initial emails, own the
+                                 update the rolling research_pool.json.
+                                 Never sends.
+  codex-outreach-workflow.md    Outreach-agent instructions: send to READY
+                                 pool rows, mark them SENT, own the
                                  trackers, handle replies/follow-ups.
-  networking-context.md         Shared campaign facts + the handoff JSON
+  networking-context.md         Shared campaign facts + the pool-file
                                  contract both agents must agree on.
 scripts/
   find_work_email.py            Cascading company-email finder used by the
@@ -31,13 +32,15 @@ scripts/
                                  GetProspect -> Tomba -> MineLead, first hit
                                  wins, with local caching and per-provider
                                  monthly quota tracking so a repeat lookup
-                                 never costs a credit twice.
-  outreach_preflight.py         No-send local gate the outreach agent runs
-                                 before touching Gmail or the trackers:
-                                 checks weekday, tracker files exist and are
-                                 readable, the résumé PDF is current, and the
-                                 day's handoff is valid — then hands back a
-                                 locked, reserved daily selection.
+                                 never costs a credit twice. --all-providers
+                                 asks every provider (catch-all recheck) and
+                                 reports whether 2+ agree.
+  outreach_preflight.py         No-send local gate. --validate-pool checks
+                                 research_pool.json against the contract
+                                 (unique ranks/identities, sendable email
+                                 states, one READY per bank/group). The
+                                 default mode validates the older dated-
+                                 handoff format.
   test_outreach_preflight.py    Test suite for the preflight gate.
 ```
 

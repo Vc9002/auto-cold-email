@@ -112,11 +112,25 @@ class PreflightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             preflight.HANDOFFS = Path(folder)
             try:
-                (preflight.HANDOFFS / "older.json").write_text(json.dumps(self.data), encoding="utf-8")
+                (preflight.HANDOFFS / "2026-09-26-claude-research.json").write_text(json.dumps(self.data), encoding="utf-8")
                 newer = {**self.data, "status": "BLOCKED", "research_completed_at_et": (self.now - timedelta(hours=1)).isoformat()}
-                (preflight.HANDOFFS / "newer.json").write_text(json.dumps(newer), encoding="utf-8")
+                (preflight.HANDOFFS / "2026-09-27-claude-research.json").write_text(json.dumps(newer), encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, "BLOCKED"):
                     preflight.latest_handoff(self.now.date(), self.now)
+            finally:
+                preflight.HANDOFFS = old_handoffs
+
+    def test_temporary_handoff_is_ignored(self):
+        old_handoffs = preflight.HANDOFFS
+        with tempfile.TemporaryDirectory() as folder:
+            preflight.HANDOFFS = Path(folder)
+            try:
+                published = preflight.HANDOFFS / "2026-09-27-claude-research.json"
+                published.write_text(json.dumps(self.data), encoding="utf-8")
+                temporary = preflight.HANDOFFS / ".tmp-2026-09-28-claude-research.json"
+                temporary.write_text("{incomplete", encoding="utf-8")
+                path, _, _ = preflight.latest_handoff(self.now.date(), self.now)
+                self.assertEqual(path, published)
             finally:
                 preflight.HANDOFFS = old_handoffs
 
@@ -167,6 +181,96 @@ class PreflightTests(unittest.TestCase):
             finally:
                 preflight.LOCK = old_lock
 
+
+
+class PoolTests(unittest.TestCase):
+    def setUp(self):
+        self.row = {
+            "contact_id": "example-banker",
+            "priority_rank": 1,
+            "name": "Example Banker",
+            "firm": "Example Bank",
+            "parent_bank": "Example Bank",
+            "city": "New York",
+            "ib_group": "Technology",
+            "group_status": "verified",
+            "connection_type": "school",
+            "connection_evidence": "Penn on profile",
+            "specific_reason": "Verified Penn education and Technology group",
+            "linkedin_url": "https://www.linkedin.com/in/example",
+            "company_email": "banker@examplebank.com",
+            "email_source": "Hunter",
+            "email_verification_state": "verified",
+            "profile_checked_at_et": "2026-09-27T06:00:00-04:00",
+            "status": "READY",
+        }
+        self.pool = {
+            "last_updated_et": "2026-09-27T06:30:00-04:00",
+            "candidates": [self.row],
+            "search_coverage_cumulative": {"searched": ["Example Bank"], "not_yet_searched": ["Other Bank"]},
+        }
+
+    def other(self, **changes):
+        row = dict(self.row, contact_id="other", name="Other Banker", priority_rank=2,
+                   linkedin_url="https://www.linkedin.com/in/other", company_email="other@examplebank.com")
+        row.update(changes)
+        return row
+
+    def test_valid_pool(self):
+        self.assertEqual(preflight.validate_pool(self.pool)["by_status"]["READY"], 1)
+
+    def test_apollo_source_fails(self):
+        self.row["email_source"] = "Apollo"
+        with self.assertRaisesRegex(ValueError, "finder-script provider"):
+            preflight.validate_pool(self.pool)
+
+    def test_catchall_single_provider_not_sendable(self):
+        self.row["email_verification_state"] = "accept_all_domain"
+        with self.assertRaisesRegex(ValueError, "not sendable"):
+            preflight.validate_pool(self.pool)
+
+    def test_catchall_two_provider_agreement_is_sendable(self):
+        self.row["email_verification_state"] = "accept_all_2plus_agree"
+        preflight.validate_pool(self.pool)
+
+    def test_duplicate_email_across_statuses_fails(self):
+        self.pool["candidates"].append(self.other(status="PENDING_EMAIL", priority_rank=None, company_email="banker@examplebank.com"))
+        with self.assertRaisesRegex(ValueError, "duplicate company_email"):
+            preflight.validate_pool(self.pool)
+
+    def test_repeated_ready_rank_fails(self):
+        self.pool["candidates"].append(self.other(parent_bank="Other Bank", priority_rank=1))
+        with self.assertRaisesRegex(ValueError, "priority_rank"):
+            preflight.validate_pool(self.pool)
+
+    def test_same_bank_group_cap_fails(self):
+        self.pool["candidates"].append(self.other())
+        with self.assertRaisesRegex(ValueError, "cap"):
+            preflight.validate_pool(self.pool)
+
+    def test_unverified_group_caps_whole_bank(self):
+        self.pool["candidates"].append(self.other(ib_group=None, group_status="unverified"))
+        with self.assertRaisesRegex(ValueError, "cap"):
+            preflight.validate_pool(self.pool)
+
+    def test_different_verified_groups_same_bank_pass(self):
+        self.pool["candidates"].append(self.other(ib_group="Healthcare"))
+        preflight.validate_pool(self.pool)
+
+    def test_non_ready_row_with_rank_fails(self):
+        self.pool["candidates"].append(self.other(status="PENDING_EMAIL", parent_bank="Other Bank"))
+        with self.assertRaisesRegex(ValueError, "null unless READY"):
+            preflight.validate_pool(self.pool)
+
+    def test_sent_row_needs_message_id(self):
+        self.row.update(status="SENT", priority_rank=None, sent_at_et="2026-09-28T10:05:00-04:00")
+        with self.assertRaisesRegex(ValueError, "gmail_message_id"):
+            preflight.validate_pool(self.pool)
+
+    def test_firm_in_both_coverage_lists_fails(self):
+        self.pool["search_coverage_cumulative"]["not_yet_searched"].append("Example Bank")
+        with self.assertRaisesRegex(ValueError, "both searched"):
+            preflight.validate_pool(self.pool)
 
 if __name__ == "__main__":
     unittest.main()
