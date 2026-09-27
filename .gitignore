@@ -7,8 +7,18 @@
 Api Key/
 **/Api Key/**
 
-# Local cache and generated data
+# Local cache, state, and generated data — regenerated per machine/run
 email_cache.db
 *.pyc
 __pycache__/
 results.json
+daily-state/
+outreach_writer.lock
+*.lock
+
+# Real campaign data — trackers, handoffs, and résumés are personal/live
+# data, not code. They live alongside this repo on the candidate's machine,
+# not in it.
+Trackers/
+Networking Handoffs/
+Resumes/
