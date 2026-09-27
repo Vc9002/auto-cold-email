@@ -32,7 +32,7 @@ class PreflightTests(unittest.TestCase):
             "specific_reason": "Verified Penn education and Technology group",
             "profile_checked_at_et": (self.now - timedelta(hours=2)).isoformat(),
             "company_email": "banker@examplebank.com",
-            "email_source": "Apollo",
+            "email_source": "Prospeo",
             "email_verification_state": "verified",
             "email_verified_at_et": (self.now - timedelta(hours=4)).isoformat(),
         }
@@ -71,14 +71,19 @@ class PreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "company_email"):
             preflight.validate_handoff(self.data, self.now.date(), self.now)
 
-    def test_unverified_apollo_email_fails(self):
+    def test_unverified_email_fails(self):
         self.candidate["email_verification_state"] = "catch-all"
-        with self.assertRaisesRegex(ValueError, "Apollo-verified"):
+        with self.assertRaisesRegex(ValueError, "finder-script-verified"):
             preflight.validate_handoff(self.data, self.now.date(), self.now)
 
-    def test_non_apollo_source_fails(self):
+    def test_invalid_source_fails(self):
         self.candidate["email_source"] = "guessed pattern"
-        with self.assertRaisesRegex(ValueError, "Apollo-verified"):
+        with self.assertRaisesRegex(ValueError, "finder-script-verified"):
+            preflight.validate_handoff(self.data, self.now.date(), self.now)
+
+    def test_apollo_source_fails(self):
+        self.candidate["email_source"] = "Apollo"
+        with self.assertRaisesRegex(ValueError, "finder-script-verified"):
             preflight.validate_handoff(self.data, self.now.date(), self.now)
 
     def test_personal_address_fails(self):
@@ -94,7 +99,7 @@ class PreflightTests(unittest.TestCase):
 
     def test_stale_email_verification_fails(self):
         self.candidate["email_verified_at_et"] = (self.now - timedelta(hours=37)).isoformat()
-        with self.assertRaisesRegex(ValueError, "Apollo email verification"):
+        with self.assertRaisesRegex(ValueError, "email verification"):
             preflight.validate_handoff(self.data, self.now.date(), self.now)
 
     def test_wrong_email_verification_offset_fails(self):

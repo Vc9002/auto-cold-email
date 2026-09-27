@@ -1,6 +1,6 @@
 """No-send campaign gate. Run with the bundled Python runtime on this PC.
 
-This script never accesses Gmail, Apollo, or email send APIs. A PASS here is
+This script never accesses Gmail, email-finder provider APIs, or email send APIs. A PASS here is
 necessary but never sufficient authorization to send. Its lock protects only
 this preflight operation; a later sender must hold the same lock continuously
 through Gmail reconciliation, each send, workbook writes, and final checks.
@@ -25,7 +25,6 @@ ROOT = Path(__file__).resolve().parent.parent
 HANDOFFS = ROOT / "Networking Handoffs"
 TRACKERS = ROOT / "Trackers"
 STATE_DIR = ROOT / "Networking Workflow" / "daily-state"
-RESUME_BASENAME = os.environ.get("RESUME_BASENAME", "Resume")  # set per campaign, e.g. "Jane_Doe_Resume_2026-07-15"
 LOCK = ROOT / "Networking Workflow" / "outreach_writer.lock"
 ET = ZoneInfo("America/New_York")
 WINDOWS = {
@@ -40,6 +39,9 @@ PERSONAL_EMAIL_DOMAINS = {
     "icloud.com", "aol.com", "proton.me", "protonmail.com",
 }
 COMPANY_EMAIL_PATTERN = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$")
+# Providers cascaded by find_work_email.py, in cascade order. Apollo is not
+# part of this workflow and must never appear here.
+VALID_EMAIL_SOURCES = {"Prospeo", "Hunter", "GetProspect", "Tomba", "MineLead"}
 
 
 def fail(message: str) -> None:
@@ -111,11 +113,11 @@ def validate_handoff(data: dict, today: date, now: datetime) -> None:
             fail("candidate company_email is not a valid company address")
         if email.lower() in emails:
             fail("candidate company emails are repeated")
-        if item.get("email_source") != "Apollo" or item.get("email_verification_state") != "verified":
-            fail("candidate email is not Apollo-verified")
+        if item.get("email_source") not in VALID_EMAIL_SOURCES or item.get("email_verification_state") != "verified":
+            fail("candidate email is not finder-script-verified")
         email_verified = parse_et(item.get("email_verified_at_et"), "email_verified_at_et")
         if email_verified > finished or now - email_verified > timedelta(hours=36):
-            fail("candidate Apollo email verification is future dated or more than 36 hours old")
+            fail("candidate email verification is future dated or more than 36 hours old")
         ranks.add(rank)
         urls.add(url)
         emails.add(email.lower())
@@ -194,7 +196,7 @@ def selection(today: date, path: Path, data: dict, digest: str, reserve: bool) -
         "send_date_et": today.isoformat(), "handoff": str(path), "handoff_sha256": digest,
         "provisional_selected": [{"rank": x["priority_rank"], "linkedin_url": x["linkedin_url"], "company_email": x["company_email"], "email_verified_at_et": x["email_verified_at_et"], "city": x["city"], "window": WINDOWS[x["city"]]} for x in selected],
         "confirmed_message_ids": [],
-        "remaining_validation": "Gmail reconciliation, both-workbook duplicates, Claude Apollo evidence review, role/group verification, actual draft and attachment review",
+        "remaining_validation": "Gmail reconciliation, both-workbook duplicates, Claude's finder-script evidence review, role/group verification, actual draft and attachment review",
     }
     if reserve:
         STATE_DIR.mkdir(exist_ok=True)
@@ -223,10 +225,10 @@ def preflight(reserve: bool = False, now: datetime | None = None) -> dict:
         with path.open("rb") as handle:
             if handle.read(2) != b"PK":
                 fail(f"tracker is unreadable or not an XLSX: {path}")
-    resume = ROOT / "Resumes" / f"{RESUME_BASENAME}.pdf"
+    resume = ROOT / "Resumes" / "Vincent_Chen_Resume_2026-07-15.pdf"
     if not resume.is_file() or resume.read_bytes()[:4] != b"%PDF":
         fail("canonical résumé PDF is missing or unreadable")
-    source = ROOT / "Resumes" / f"{RESUME_BASENAME}.docx"
+    source = ROOT / "Resumes" / "Vincent_Chen_Resume_2026-07-15.docx"
     if source.stat().st_mtime > resume.stat().st_mtime:
         fail("canonical Word résumé is newer than its PDF export")
     path, data, digest = latest_handoff(today, now)
