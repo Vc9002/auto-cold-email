@@ -1,0 +1,14 @@
+# Secrets and credentials — never commit these
+*api_key*
+.env
+.env.*
+*.pem
+*.key
+Api Key/
+**/Api Key/**
+
+# Local cache and generated data
+email_cache.db
+*.pyc
+__pycache__/
+results.json
